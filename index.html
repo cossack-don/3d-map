@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Title</title>
+    <style>
+        input {
+            position: relative;
+            z-index: 999;
+        }
+
+    </style>
+</head>
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset='utf-8' />
+    <title>Add a 3D model</title>
+    <meta name='viewport' content='initial-scale=1,maximum-scale=1,user-scalable=no' />
+    <script src='https://api.tiles.mapbox.com/mapbox-gl-js/v1.3.0/mapbox-gl.js'></script>
+    <link href='https://api.tiles.mapbox.com/mapbox-gl-js/v1.3.0/mapbox-gl.css' rel='stylesheet' />
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        #map {
+            position: absolute;
+            top: 0;
+            bottom: 0;
+            width: 100%;
+        }
+    </style>
+</head>
+
+<body>
+
+<script src='https://unpkg.com/three@0.106.2/build/three.min.js'></script>
+<script src="https://unpkg.com/three@0.106.2/examples/js/loaders/GLTFLoader.js"></script>
+<!--<input type="number" step="0.00001" id="x" name="x" value="4.358799" />
+<input type="number" step="0.00001" id="y" name="y" value="50.861394" />-->
+<div id='map'></div>
+<script>
+    mapboxgl.accessToken = 'pk.eyJ1IjoiamFzcGVydmQiLCJhIjoiM2dsdGFTTSJ9.hizWNdPK2USg-V1KGpqMmg';
+    var brussels = [4.351721, 50.850346];
+    var buildings = [4.359188, 50.861448];
+    var buildings_place = [4.358799, 50.861394];
+    var surroundings = [4.360960, 50.857014];
+    var map = new mapboxgl.Map({
+        style: 'mapbox://styles/jaspervd/ck7epqlmx1w1t1ipovfipo3fu',
+        center: buildings,
+        zoom: 10,
+        pitch: 0,
+        bearing: 0,
+        container: 'map',
+        antialias: true
+    });
+    /*
+      zoom: 17.2,
+      pitch: 0,
+      bearing: -60,
+    */
+    var modelOrigin = buildings_place;
+    var modelAltitude = 0;
+    var modelRotate = [Math.PI / 2, Math.PI / 1.105, 0];
+    var modelAsMercatorCoordinate = mapboxgl.MercatorCoordinate.fromLngLat(modelOrigin, modelAltitude);
+    // transformation parameters to position, rotate and scale the 3D model onto the map
+    var modelTransform = {
+        translateX: modelAsMercatorCoordinate.x,
+        translateY: modelAsMercatorCoordinate.y,
+        translateZ: modelAsMercatorCoordinate.z,
+        rotateX: modelRotate[0],
+        rotateY: modelRotate[1],
+        rotateZ: modelRotate[2],
+        /* Since our 3D model is in real world meters, a scale transform needs to be
+         * applied since the CustomLayerInterface expects units in MercatorCoordinates.
+         */
+        scale: modelAsMercatorCoordinate.meterInMercatorCoordinateUnits() * 0.27
+    };
+    var THREE = window.THREE;
+    // configuration of the custom layer for a 3D model per the CustomLayerInterface
+    var customLayer = {
+        id: '3d-model',
+        type: 'custom',
+        renderingMode: '3d',
+        onAdd: function(map, gl) {
+            this.camera = new THREE.Camera();
+            this.scene = new THREE.Scene();
+
+            var width = 2000;
+            var height = 2000;
+            var intensity = 1.3;
+            var rectLight = new THREE.RectAreaLight(0xffffff, intensity, width, height);
+            rectLight.position.set(0, 1600, 0);
+            rectLight.lookAt(0, 0, 0);
+            this.scene.add(rectLight)
+            rectLightHelper = new THREE.RectAreaLightHelper(rectLight);
+            //rectLight.add( rectLightHelper );
+            // use the three.js GLTF loader to add the 3D model to the three.js scene
+            var loader = new THREE.GLTFLoader();
+            loader.load('https://jaspers.work/NG_b.gltf', (function(gltf) {
+                this.scene.add(gltf.scene);
+            }).bind(this));
+            this.map = map;
+            // use the Mapbox GL JS map canvas for three.js
+            this.renderer = new THREE.WebGLRenderer({
+                canvas: map.getCanvas(),
+                context: gl,
+                antialias: true
+            });
+            this.renderer.autoClear = false;
+        },
+        render: function(gl, matrix) {
+            var rotationX = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(1, 0, 0), modelTransform.rotateX);
+            var rotationY = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(0, 1, 0), modelTransform.rotateY);
+            var rotationZ = new THREE.Matrix4().makeRotationAxis(new THREE.Vector3(0, 0, 1), modelTransform.rotateZ);
+            var m = new THREE.Matrix4().fromArray(matrix);
+            var l = new THREE.Matrix4().makeTranslation(modelTransform.translateX, modelTransform.translateY,
+                modelTransform.translateZ)
+                .scale(new THREE.Vector3(modelTransform.scale, -modelTransform.scale, modelTransform.scale))
+                .multiply(rotationX)
+                .multiply(rotationY)
+                .multiply(rotationZ);
+            this.camera.projectionMatrix.elements = matrix;
+            this.camera.projectionMatrix = m.multiply(l);
+            this.renderer.state.reset();
+            this.renderer.render(this.scene, this.camera);
+            this.map.triggerRepaint();
+        }
+    };
+    map.on('style.load', function() {
+        map.addLayer(customLayer, 'waterway-label');
+    });
+    // The 'building' layer in the mapbox-streets vector source contains building-height
+    // data from OpenStreetMap.
+    var keepRotating = true;
+
+    function rotateCamera(timestamp) {
+        if (!keepRotating)
+            return;
+        // clamp the rotation between 0 -360 degrees
+        // Divide timestamp by 100 to slow rotation to ~10 degrees / sec
+        map.rotateTo((timestamp / 100) % 360, {
+            duration: 0
+        });
+        // Request the next frame of the animation.
+        requestAnimationFrame(rotateCamera);
+    }
+    map.on('load', function() {
+        //rotateCamera(0);
+        // Insert the layer beneath any symbol layer.
+        var layers = map.getStyle().layers;
+        var labelLayerId;
+        for (var i = 0; i < layers.length; i++) {
+            if (layers[i].type === 'symbol' && layers[i].layout['text-field']) {
+                labelLayerId = layers[i].id;
+                break;
+            }
+        }
+        map.addLayer({
+            'id': '3d-buildings',
+            'source': 'composite',
+            'source-layer': 'building',
+            'filter': ['==', 'extrude', 'true'],
+            'type': 'fill-extrusion',
+            'minzoom': 15,
+            'paint': {
+                'fill-extrusion-color': '#0E0F17',
+                // use an 'interpolate' expression to add a smooth transition effect to the
+                // buildings as the user zooms in
+                'fill-extrusion-height': [
+                    "interpolate", ["linear"],
+                    ["zoom"],
+                    15, 0,
+                    15.05, ["get", "height"]
+                ],
+                'fill-extrusion-base': [
+                    "interpolate", ["linear"],
+                    ["zoom"],
+                    15, 0,
+                    15.05, ["get", "min_height"]
+                ],
+                'fill-extrusion-opacity': 0.4
+            }
+        }, labelLayerId);
+        setTimeout(function() {
+            keepRotating = false;
+            map.flyTo({
+                center: brussels,
+                zoom: 12.4,
+                pitch: 45,
+                bearing: -20,
+                speed: 1.4,
+                essential: true,
+            });
+        }, 700);
+        setTimeout(function() {
+            keepRotating = false;
+            map.flyTo({
+                center: buildings,
+                zoom: 16.2,
+                pitch: 45,
+                bearing: -60,
+                speed: 1.1,
+                essential: true,
+            });
+        }, 1800);
+        setTimeout(function() {
+            keepRotating = false;
+            map.flyTo({
+                center: surroundings,
+                zoom: 15.4,
+                pitch: 60,
+                bearing: -30,
+                speed: 0.6,
+                curve: 1,
+                essential: true,
+            });
+        }, 4400);
+    });
+
+</script>
+
+</body>
+
+</html>
+</html>
